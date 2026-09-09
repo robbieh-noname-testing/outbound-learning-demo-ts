@@ -141,4 +141,70 @@ app.get('/node-fetch-post', async (req, res) => {
     res.json(await response.json());
 });
 
+// === Target-resolution scenarios (15-20), appended 8/18 =====================
+// These exercise TARGET RESOLUTION, not client detection. Every one is already
+// DETECTED today and reports `resolution=unresolved` — that is the point: they
+// give backlog item 7 a before/after baseline in a fast harness. Appended past
+// scenario 14 so every documented line above stays put.
+//
+// Deliberately NOT here: honest-stop cases (param shadow, let/var, destructured
+// binding, concatenation refusal, no-binding). Those are pure-AST rules that
+// need no index, no traversal, and no collector — they belong in hermetic unit
+// tests, where they run in milliseconds. A demo app should only carry shapes
+// where the PIPELINE is part of what is being tested.
+
+const QUOTE_URL = 'https://api.example.com/quote';
+
+// 15. Relative literal at the call site, NO leading slash — the tier-1b shape
+//     the shipped scheme gate (`_URL_LITERAL_RE`) drops today. Slash-less on
+//     purpose: P_10's real constants are spelled 'internal/user/get/me', so a
+//     naive "starts with /" path test would miss the dominant production form.
+app.get('/relative-bare', async (req, res) => {
+    const response = await api.get('internal/user/get/me');
+    res.json(response.data);
+});
+
+// 16. Bare identifier argument — tier 2's second syntactic form (the first is
+//     the template in scenario 9). Same binding walk, different call shape.
+app.get('/const-identifier', async (req, res) => {
+    const response = await axios.get(QUOTE_URL);
+    res.json(response.data);
+});
+
+// 17. Env-derived host template — the modal production shape (present in 12/12
+//     repos in the 8/18 OSS census). Unresolvable BY DESIGN: 12-factor keeps
+//     the value out of source entirely, so the best available answer is a hole
+//     labelled API_HOST, not a string. Resolution is not monotonically better.
+app.get('/env-host', async (req, res) => {
+    const response = await fetch(`${process.env.API_HOST}/status`);
+    res.json(await response.json());
+});
+
+// 18. Caller-controlled target — the destination comes from the REQUEST body.
+//     Statically unresolvable forever, and resolving it is not the goal: this
+//     is SSRF-shaped ("this endpoint proxies wherever it is told") and wants
+//     its own classification rather than collapsing into `unresolved`.
+app.post('/proxy', async (req, res) => {
+    const response = await axios.get(req.body.url);
+    res.json(response.data);
+});
+
+// 19. Config-object `url:` holding a const instead of a literal. Today
+//     `_object_string_value` reads the value with `_literal_text` and gets
+//     None; routing that read through the evaluator should make this resolve
+//     identically to scenario 16 — the "rides along for ~a line" case.
+app.get('/config-const', async (req, res) => {
+    const response = await axios({ method: 'get', url: QUOTE_URL });
+    res.json(response.data);
+});
+
+// 20. Partial template — a fully resolvable prefix plus a genuinely runtime
+//     hole. The correct answer is a SKELETON, not a complete target, which is
+//     why complete-only emission still reports this unresolved after build
+//     step 2, and step 4 (hole rendering) is what finally surfaces it.
+app.get('/items/:id', async (req, res) => {
+    const response = await fetch(`${UPSTREAM}/v1/items/${req.params.id}`);
+    res.json(await response.json());
+});
+
 app.listen(3000);
